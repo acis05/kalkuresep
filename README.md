@@ -92,3 +92,10 @@ Buka http://127.0.0.1:8000. Untuk lokal gunakan `COOKIE_SECURE=false` agar sesi 
 - Pastikan `DATABASE_URL=${{Postgres.DATABASE_URL}}` mengarah ke database Railway yang benar dan `COOKIE_SECURE=true` untuk HTTPS. Jika login tetap gagal, periksa Railway **Deploy Logs** dan **HTTP Logs**, terutama status 401/403/500; jangan kirim password atau isi secret.
 
 **Batasan:** satuan custom tidak boleh dihapus selama digunakan; harga pembelian dihitung berdasarkan kuantitas kemasan, bukan harga per satuan pakai. Fitur edit satuan/bahan yang sudah tersimpan belum tersedia dalam UI; buat entri baru bila perlu. Gunakan staging dan backup sebelum pembaruan production.
+
+
+## Perubahan v2.5
+- Tombol Edit pada daftar resep, memuat seluruh bahan dan biaya tambahan ke editor, menyimpan melalui PUT, serta tombol Batal Edit.
+- Perbandingan HPP: status loading, pesan untuk Free, keadaan kosong, dan tabel perbandingan HPP Pro yang lebih informatif.
+- Perbandingan HPP harus memakai satuan hasil yang sebanding; tidak mengubah model database.
+- Deploy: backup PostgreSQL, upload isi folder proyek ke root repo GitHub, commit, deploy Railway, lalu hard refresh browser.
