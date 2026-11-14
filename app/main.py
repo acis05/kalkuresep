@@ -297,6 +297,18 @@ def add_ingredient(data:IngredientIn,u:User=Depends(current_user),db:Session=Dep
     qty=dec(data.purchase_qty,True);price=dec(data.price_per_unit)
     x=Ingredient(owner_id=u.id,name=data.name.strip(),unit=data.usage_unit,price_per_unit=str(price),purchase_qty=str(qty),purchase_unit=data.purchase_unit,usage_unit=data.usage_unit)
     db.add(x);db.flush();db.add(IngredientPriceHistory(owner_id=u.id,ingredient_id=x.id,price_per_unit=str(price),created_at=int(time.time())));db.commit();return {'id':x.id}
+@app.put('/api/ingredients/{item_id}')
+def edit_ingredient(item_id:int,data:IngredientIn,u:User=Depends(current_user),db:Session=Depends(db_session)):
+    x=db.scalar(select(Ingredient).where(Ingredient.id==item_id,Ingredient.owner_id==u.id))
+    if not x: raise HTTPException(404,'Bahan tidak ditemukan')
+    conversion(db,u,data.purchase_unit,data.usage_unit)
+    qty=dec(data.purchase_qty,True);price=dec(data.price_per_unit)
+    changed_price=dec(x.price_per_unit)!=price
+    x.name=data.name.strip();x.purchase_qty=str(qty);x.purchase_unit=data.purchase_unit
+    x.usage_unit=data.usage_unit;x.unit=data.usage_unit;x.price_per_unit=str(price)
+    if changed_price: db.add(IngredientPriceHistory(owner_id=u.id,ingredient_id=x.id,price_per_unit=str(price),created_at=int(time.time())))
+    db.commit();return {'id':x.id,'ok':True}
+
 @app.delete('/api/ingredients/{item_id}')
 def delete_ingredient(item_id:int,u:User=Depends(current_user),db:Session=Depends(db_session)):
     x=db.scalar(select(Ingredient).where(Ingredient.id==item_id,Ingredient.owner_id==u.id))
@@ -393,10 +405,12 @@ def calculate(recipe_id:int,target:str='1',sell_price:str='0',u:User=Depends(cur
     if not x: raise HTTPException(404,'Resep tidak ditemukan')
     if recipe_id in getattr(db,'_kr_stack',[]) or len(getattr(db,'_kr_stack',[]))>=12: raise HTTPException(422,'Siklus sub-resep terdeteksi')
     factor=dec(target,True)/dec(x.yield_qty,True);selling=dec(sell_price)
-    items=[];total=Decimal(0);flour=Decimal(0)
+    items=[];total=Decimal(0);flour=Decimal(0);missing_ingredients=[]
     for row in json.loads(x.items_json):
         ing=db.scalar(select(Ingredient).where(Ingredient.id==row['ingredient_id'],Ingredient.owner_id==u.id))
-        if not ing:raise HTTPException(409,'Resep memiliki bahan yang sudah dihapus; perbaiki resep dahulu')
+        if not ing:
+            missing_ingredients.append(row['ingredient_id'])
+            continue
         unit=row.get('unit') or ing.usage_unit
         qty=dec(row['qty'])*factor
         # price_per_unit is the price of purchase_qty purchase_unit (e.g. Rp 14.000 / 1 kg).
@@ -426,7 +440,7 @@ def calculate(recipe_id:int,target:str='1',sell_price:str='0',u:User=Depends(cur
     extra={k:dec(getattr(x,k))*factor for k in ('packaging_cost','labor_cost','overhead_cost')}
     full=total+sum(extra.values(),Decimal(0))
     hpp=full/dec(target,True)
-    return {'items':items,'ingredient_cost':str(total),'extra_costs':{k:str(v) for k,v in extra.items()},'total_cost':str(full),'hpp_per_unit':str(hpp),'selling_price':str(selling),'profit_per_unit':str(selling-hpp),'margin_pct':str((selling-hpp)/selling*100) if selling else None,'factor':str(factor),'note':'HPP lengkap mencakup biaya bahan, kemasan, tenaga kerja dan overhead berdasarkan input resep dasar'}
+    return {'items':items,'ingredient_cost':str(total),'extra_costs':{k:str(v) for k,v in extra.items()},'total_cost':str(full),'hpp_per_unit':str(hpp),'selling_price':str(selling),'profit_per_unit':str(selling-hpp),'margin_pct':str((selling-hpp)/selling*100) if selling else None,'factor':str(factor),'missing_ingredients':missing_ingredients,'note':'HPP lengkap mencakup biaya bahan, kemasan, tenaga kerja dan overhead berdasarkan input resep dasar'}
 
 @app.get('/api/admin/users')
 def admin_users(admin:User=Depends(require_admin),db:Session=Depends(db_session)):

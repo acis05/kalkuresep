@@ -112,3 +112,9 @@ Enam fitur Pro: **sub-resep**, **simulasi harga bahan**, **Smart Selling Price**
 - Import Excel menggunakan library `openpyxl` yang sudah tercantum dalam `requirements.txt`.
 
 **Catatan**: `ADMIN_SYNC_PASSWORD=true` hanya sementara untuk reset password akun yang sudah berstatus admin; setelah berhasil, ubah ke `false`.
+
+
+## v2.7
+- Edit master bahan: nama, kuantitas beli, satuan beli/pakai, harga, riwayat perubahan harga.
+- Resep dengan bahan terhapus tetap dapat dihitung dari bahan yang masih ada. Respons kalkulasi memuat `missing_ingredients` dan UI memberi peringatan. Nilai HPP setelah penghapusan tidak mencakup bahan hilang dan bukan HPP produksi lengkap.
+- Saat edit resep, referensi bahan terhapus dilewati; simpan untuk membersihkannya.
