@@ -79,3 +79,16 @@ Buka http://127.0.0.1:8000. Untuk lokal gunakan `COOKIE_SECURE=false` agar sesi 
 - Paket Pro 365 hari masih diaktifkan manual setelah pembayaran diverifikasi.
 - Perubahan UI ini tidak memerlukan migrasi database tambahan. Backup database sebelum deploy tetap disarankan.
 - Catatan keamanan: aplikasi belum dilengkapi verifikasi email, reset password, rate limiting terdistribusi, backup otomatis, dan audit log admin. Jangan menerima pembayaran publik sebelum pengujian dan hardening produksi.
+
+## Pembaruan v2.4 — satuan, konversi dan admin
+
+- Menu **Master Satuan** untuk menambah satuan milik akun sendiri: tentukan jenis (berat/volume/jumlah) dan faktor ke basis **g/ml/pcs**. Contoh `ons` faktor `100` (100 g), `dus` faktor `24` (24 pcs). Tidak bisa mengonversi berat ke volume tanpa data densitas.
+- Di **Bahan Baku**, isi **jumlah pembelian**, **satuan beli**, **satuan pakai**, dan **harga total pembelian**. Misal tepung: 1 kg seharga Rp14.000, dipakai 100 g, maka HPP bahan Rp1.400. Baris resep dapat memilih satuan yang kompatibel.
+- Data bahan lama dipertahankan: harga lama dianggap harga per 1 satuan lama. Backup database sebelum deploy.
+- **Admin bootstrap:** `ADMIN_EMAIL` dan `ADMIN_PASSWORD` minimal 16 karakter, hanya membuat akun admin bila belum ada. Mengubah `ADMIN_PASSWORD` saja tidak mengubah password admin lama.
+- Untuk mereset password **akun yang sudah admin**: tambahkan `ADMIN_SYNC_PASSWORD=true` sementara pada Railway Variables dan lakukan redeploy/restart. Setelah berhasil login, **hapus** variabel itu (atau set `false`) agar password tidak terus di-reset pada setiap restart. Ini tidak menaikkan akun biasa menjadi admin. Jangan bagikan password/log ke siapa pun.
+- Jika email admin sudah pernah didaftarkan sebagai akun biasa, startup akan gagal dengan pesan konflik. Gunakan `ADMIN_EMAIL` lain yang belum dipakai atau lakukan migrasi terverifikasi. Jangan langsung mengubah role akun biasa dari input publik.
+- Untuk login admin, gunakan halaman login biasa. Setelah masuk sebagai admin, menu **Admin Panel** muncul di sidebar.
+- Pastikan `DATABASE_URL=${{Postgres.DATABASE_URL}}` mengarah ke database Railway yang benar dan `COOKIE_SECURE=true` untuk HTTPS. Jika login tetap gagal, periksa Railway **Deploy Logs** dan **HTTP Logs**, terutama status 401/403/500; jangan kirim password atau isi secret.
+
+**Batasan:** satuan custom tidak boleh dihapus selama digunakan; harga pembelian dihitung berdasarkan kuantitas kemasan, bukan harga per satuan pakai. Fitur edit satuan/bahan yang sudah tersimpan belum tersedia dalam UI; buat entri baru bila perlu. Gunakan staging dan backup sebelum pembaruan production.

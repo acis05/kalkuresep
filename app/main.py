@@ -36,6 +36,17 @@ class Ingredient(Base):
     name:Mapped[str]=mapped_column(String(120))
     unit:Mapped[str]=mapped_column(String(20))
     price_per_unit:Mapped[str]=mapped_column(String(40))
+    purchase_qty:Mapped[str]=mapped_column(String(40),default='1')
+    purchase_unit:Mapped[str]=mapped_column(String(24),default='g')
+    usage_unit:Mapped[str]=mapped_column(String(24),default='g')
+class Unit(Base):
+    __tablename__='units'
+    id:Mapped[int]=mapped_column(primary_key=True)
+    owner_id:Mapped[int]=mapped_column(ForeignKey('users.id'),index=True)
+    code:Mapped[str]=mapped_column(String(24))
+    dimension:Mapped[str]=mapped_column(String(16))
+    factor:Mapped[str]=mapped_column(String(40))
+
 class Recipe(Base):
     __tablename__='recipes'
     id:Mapped[int]=mapped_column(primary_key=True)
@@ -63,7 +74,7 @@ class ExportUsage(Base):
     kind:Mapped[str]=mapped_column(String(10))
     created_at:Mapped[int]=mapped_column(Integer)
 
-app=FastAPI(title='KalkuResep Cloud',version='2.3.0')
+app=FastAPI(title='KalkuResep Cloud',version='2.4.0')
 _attempts={}
 def throttle(request:Request, action:str):
     # In-memory guard for single-instance MVP. Use Redis for multiple replicas.
@@ -83,6 +94,12 @@ def startup():
             cols=lambda table: {row[0] for row in conn.execute(text('SELECT column_name FROM information_schema.columns WHERE table_name=:table'), {'table':table})}
         if 'pro_expires_at' not in cols('users'):
             conn.execute(text('ALTER TABLE users ADD COLUMN pro_expires_at INTEGER'))
+        for field,default in (('purchase_qty','1'),('purchase_unit',''),('usage_unit','')):
+            if field not in cols('ingredients'):
+                conn.execute(text(f"ALTER TABLE ingredients ADD COLUMN {field} VARCHAR(40) DEFAULT '{default}' NOT NULL"))
+        # Preserve historical prices: old price_per_unit refers to the old ingredient.unit.
+        conn.execute(text("UPDATE ingredients SET purchase_unit=unit WHERE purchase_unit=''"))
+        conn.execute(text("UPDATE ingredients SET usage_unit=unit WHERE usage_unit=''"))
         for field in ('packaging_cost','labor_cost','overhead_cost'):
             if field not in cols('recipes'):
                 conn.execute(text(f"ALTER TABLE recipes ADD COLUMN {field} VARCHAR(40) DEFAULT '0' NOT NULL"))
@@ -92,6 +109,8 @@ def startup():
             existing=db.scalar(select(User).where(User.email==email))
             if not existing:
                 db.add(User(email=email,password_hash=hash_password(password),plan='pro',is_admin=True))
+            elif existing.is_admin and os.getenv('ADMIN_SYNC_PASSWORD','false').lower()=='true':
+                existing.password_hash=hash_password(password)
             elif not existing.is_admin:
                 # Admin bootstrap must not silently promote an account registered by someone else.
                 raise RuntimeError('ADMIN_EMAIL sudah terdaftar sebagai akun biasa. Gunakan email admin lain atau migrasi akun secara terverifikasi.')
@@ -148,12 +167,52 @@ class Credentials(BaseModel):
     password:str=Field(min_length=12,max_length=256)
 class IngredientIn(BaseModel):
     name:str=Field(min_length=1,max_length=120)
-    unit:str=Field(pattern='^(g|kg|ml|l|pcs)$')
+    purchase_qty:str='1'
+    purchase_unit:str=Field(min_length=1,max_length=24)
+    usage_unit:str=Field(min_length=1,max_length=24)
     price_per_unit:str
+class UnitIn(BaseModel):
+    code:str=Field(min_length=1,max_length=24,pattern=r'^[a-zA-Z0-9_-]+$')
+    dimension:str=Field(pattern='^(mass|volume|count)$')
+    factor:str
+
+BUILTIN_UNITS={'g':('mass',Decimal('1')),'kg':('mass',Decimal('1000')),'mg':('mass',Decimal('0.001')),
+               'ml':('volume',Decimal('1')),'l':('volume',Decimal('1000')),
+               'pcs':('count',Decimal('1')),'lusin':('count',Decimal('12'))}
+def unit_info(db,u,code):
+    if code in BUILTIN_UNITS:return BUILTIN_UNITS[code]
+    x=db.scalar(select(Unit).where(Unit.owner_id==u.id,Unit.code==code))
+    if not x:raise HTTPException(422,f'Satuan {code} tidak ditemukan')
+    return x.dimension,dec(x.factor,True)
+def conversion(db,u,source,dest):
+    sd,sf=unit_info(db,u,source);dd,df=unit_info(db,u,dest)
+    if sd!=dd:raise HTTPException(422,f'Satuan {source} dan {dest} tidak kompatibel')
+    return sf/df
+@app.get('/api/units')
+def list_units(u:User=Depends(current_user),db:Session=Depends(db_session)):
+    return [{'code':k,'dimension':v[0],'factor':str(v[1]),'builtin':True} for k,v in BUILTIN_UNITS.items()]+[{'code':x.code,'dimension':x.dimension,'factor':x.factor,'builtin':False} for x in db.scalars(select(Unit).where(Unit.owner_id==u.id).order_by(Unit.code))]
+@app.post('/api/units')
+def create_unit(data:UnitIn,u:User=Depends(current_user),db:Session=Depends(db_session)):
+    code=data.code.strip().lower()
+    if code in BUILTIN_UNITS or db.scalar(select(Unit).where(Unit.owner_id==u.id,Unit.code==code)):
+        raise HTTPException(409,'Kode satuan sudah digunakan')
+    factor=dec(data.factor,True)
+    db.add(Unit(owner_id=u.id,code=code,dimension=data.dimension,factor=str(factor)));db.commit()
+    return {'code':code}
+@app.delete('/api/units/{code}')
+def remove_unit(code:str,u:User=Depends(current_user),db:Session=Depends(db_session)):
+    x=db.scalar(select(Unit).where(Unit.owner_id==u.id,Unit.code==code))
+    if not x:raise HTTPException(404,'Satuan tidak ditemukan atau satuan bawaan')
+    if db.scalar(select(Ingredient.id).where(Ingredient.owner_id==u.id,((Ingredient.purchase_unit==code)|(Ingredient.usage_unit==code))).limit(1)):
+        raise HTTPException(409,'Satuan masih digunakan oleh bahan')
+    for r in db.scalars(select(Recipe).where(Recipe.owner_id==u.id)):
+        if any(item.get('unit')==code for item in json.loads(r.items_json)):
+            raise HTTPException(409,'Satuan masih digunakan dalam resep')
+    db.delete(x);db.commit();return {'ok':True}
 class RecipeIn(BaseModel):
     name:str=Field(min_length=1,max_length=120)
     yield_qty:str
-    yield_unit:str=Field(default='pcs',pattern='^(pcs|g|kg|ml|l)$')
+    yield_unit:str=Field(default='pcs',max_length=24)
     items:list[dict]=Field(default_factory=list,max_length=100)
     packaging_cost:str='0'
     labor_cost:str='0'
@@ -213,11 +272,15 @@ def me(u:User=Depends(current_user)): return user_view(u)
 
 @app.get('/api/ingredients')
 def ingredients(u:User=Depends(current_user),db:Session=Depends(db_session)):
-    return [{'id':x.id,'name':x.name,'unit':x.unit,'price_per_unit':x.price_per_unit} for x in db.scalars(select(Ingredient).where(Ingredient.owner_id==u.id).order_by(Ingredient.name))]
+    return [{'id':x.id,'name':x.name,'unit':x.usage_unit,'purchase_qty':x.purchase_qty,'purchase_unit':x.purchase_unit,'usage_unit':x.usage_unit,'price_per_unit':x.price_per_unit} for x in db.scalars(select(Ingredient).where(Ingredient.owner_id==u.id).order_by(Ingredient.name))]
 @app.post('/api/ingredients')
 def add_ingredient(data:IngredientIn,u:User=Depends(current_user),db:Session=Depends(db_session)):
-    if effective_plan(u)=='free' and db.scalar(select(func.count()).select_from(Ingredient).where(Ingredient.owner_id==u.id))>=30: raise HTTPException(403,'Batas 30 bahan paket Free tercapai')
-    price=dec(data.price_per_unit);x=Ingredient(owner_id=u.id,name=data.name.strip(),unit=data.unit,price_per_unit=str(price));db.add(x);db.flush();db.add(IngredientPriceHistory(owner_id=u.id,ingredient_id=x.id,price_per_unit=str(price),created_at=int(time.time())));db.commit();return {'id':x.id}
+    count=db.scalar(select(func.count()).select_from(Ingredient).where(Ingredient.owner_id==u.id))
+    if effective_plan(u)=='free' and count>=30:raise HTTPException(403,'Batas 30 bahan paket Free tercapai')
+    conversion(db,u,data.purchase_unit,data.usage_unit)
+    qty=dec(data.purchase_qty,True);price=dec(data.price_per_unit)
+    x=Ingredient(owner_id=u.id,name=data.name.strip(),unit=data.usage_unit,price_per_unit=str(price),purchase_qty=str(qty),purchase_unit=data.purchase_unit,usage_unit=data.usage_unit)
+    db.add(x);db.flush();db.add(IngredientPriceHistory(owner_id=u.id,ingredient_id=x.id,price_per_unit=str(price),created_at=int(time.time())));db.commit();return {'id':x.id}
 @app.delete('/api/ingredients/{item_id}')
 def delete_ingredient(item_id:int,u:User=Depends(current_user),db:Session=Depends(db_session)):
     x=db.scalar(select(Ingredient).where(Ingredient.id==item_id,Ingredient.owner_id==u.id))
@@ -233,7 +296,9 @@ def validate_recipe(data,db,u):
         except (KeyError,ValueError,TypeError): raise HTTPException(422,'Item bahan tidak valid')
         ing=db.scalar(select(Ingredient).where(Ingredient.id==ingredient_id,Ingredient.owner_id==u.id))
         if not ing: raise HTTPException(422,'Bahan bukan milik akun ini')
-        normalized.append({'ingredient_id':ingredient_id,'qty':str(qty)})
+        unit=str(row.get('unit') or ing.usage_unit)
+        conversion(db,u,unit,ing.purchase_unit)
+        normalized.append({'ingredient_id':ingredient_id,'qty':str(qty),'unit':unit})
     return normalized
 @app.get('/api/recipes')
 def recipes(u:User=Depends(current_user),db:Session=Depends(db_session)):
@@ -295,14 +360,19 @@ def calculate(recipe_id:int,target:str='1',sell_price:str='0',u:User=Depends(cur
     items=[];total=Decimal(0);flour=Decimal(0)
     for row in json.loads(x.items_json):
         ing=db.scalar(select(Ingredient).where(Ingredient.id==row['ingredient_id'],Ingredient.owner_id==u.id))
-        if not ing: raise HTTPException(409,'Resep memiliki bahan yang sudah dihapus; perbaiki resep dahulu')
-        qty=dec(row['qty'])*factor;cost=qty*dec(ing.price_per_unit);total+=cost
-        if 'tepung' in ing.name.lower() and ing.unit in ('g','kg'): flour+=dec(row['qty'])*(Decimal(1000) if ing.unit=='kg' else 1)
-        items.append({'name':ing.name,'unit':ing.unit,'qty':str(qty),'cost':str(cost),'base_qty':str(row['qty'])})
+        if not ing:raise HTTPException(409,'Resep memiliki bahan yang sudah dihapus; perbaiki resep dahulu')
+        unit=row.get('unit') or ing.usage_unit
+        qty=dec(row['qty'])*factor
+        # price_per_unit is the price of purchase_qty purchase_unit (e.g. Rp 14.000 / 1 kg).
+        cost=qty*conversion(db,u,unit,ing.purchase_unit)/dec(ing.purchase_qty,True)*dec(ing.price_per_unit)
+        total+=cost
+        dim,_=unit_info(db,u,unit)
+        grams=dec(row['qty'])*conversion(db,u,unit,'g') if dim=='mass' else None
+        if grams is not None and 'tepung' in ing.name.lower():flour+=grams
+        items.append({'name':ing.name,'unit':unit,'qty':str(qty),'cost':str(cost),'base_grams':grams})
     for item in items:
-        ing_unit=item['unit'];base=Decimal(item.pop('base_qty'))
-        gram=base*(Decimal(1000) if ing_unit=='kg' else 1)
-        item['bakers_pct']=str(gram/flour*100) if flour and ing_unit in ('g','kg') else None
+        grams=item.pop('base_grams')
+        item['bakers_pct']=str(grams/flour*100) if flour and grams is not None else None
     extra={k:dec(getattr(x,k))*factor for k in ('packaging_cost','labor_cost','overhead_cost')}
     full=total+sum(extra.values(),Decimal(0))
     hpp=full/dec(target,True)
