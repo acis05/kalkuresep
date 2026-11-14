@@ -33,3 +33,32 @@ label,td{color:#51412a}th{background:#fff4d9;color:#80602c}td,th{border-bottom-c
 .mint,.gold{background:#ffedb9;color:#a46d0b}.blue{background:#fbead0;color:#9d6b20}
 .recipe-name-cell{display:flex;align-items:center;gap:12px;min-width:160px}.recipe-thumb{width:58px;height:58px;object-fit:cover;border-radius:12px;flex:none;border:1px solid #f0dfbc}.recipe-placeholder{display:grid;place-items:center;background:#fff1cf;font-size:25px}
 .photo-editor{background:#fffaed;border:1px dashed #dfbd71;border-radius:14px;padding:16px;margin:12px 0 22px}.photo-editor input{margin-top:8px}.photo-preview-wrap{display:flex;align-items:center;gap:12px;margin-top:10px}.photo-preview-wrap img{width:150px;height:110px;object-fit:cover;border-radius:12px}
+
+/* v2.13 — Golden Kitchen visual refresh, accessible always-visible logout */
+:root{--culinary-amber:#f6b819;--culinary-honey:#ffcf54;--culinary-dark:#3a260e;--culinary-cream:#fffaf0;--culinary-border:#eddcb7}
+body,.main-area{background:linear-gradient(145deg,#fffaf0 0%,#fff6e5 60%,#fffdf8 100%);color:#39280f}
+.auth-brand{background:radial-gradient(circle at 83% 15%,#ffda71 0%,transparent 35%),linear-gradient(140deg,#f3b323 0%,#d38a10 52%,#8b4c0a 100%);color:#30200b}
+.auth-brand .hero h1{color:#30200b;text-shadow:0 1px 0 #ffe6a1}
+.auth-brand .hero em{color:#fff9e7}.auth-brand .hero p,.auth-brand .hero-footer{color:#fff7e3}
+.hero-features span{background:#fff8e529;border-color:#fff4d277;color:#fffdf7}
+.auth-side{background:radial-gradient(circle at 100% 0%,#fff0c7,transparent 48%),#fffcf6}
+.auth-card{background:#ffffffd9;border:1px solid #f3e2bd;border-radius:24px;padding:clamp(20px,3vw,36px);box-shadow:0 22px 70px #a86e1818}
+.sidebar{background:linear-gradient(175deg,#573914,#39250f 58%,#271a0d);box-shadow:5px 0 25px #5e3e1110}
+.sidebar .brand img{background:#fff5d7}.sidebar .nav-btn{transition:background .18s ease,transform .18s ease;color:#f6e8c9}
+.sidebar .nav-btn.active{background:linear-gradient(100deg,#ffcb47,#efa919);color:#35230d;font-weight:800;box-shadow:0 6px 18px #1c110a35}
+.sidebar .nav-btn:hover{background:#76531e;color:#fff}.sidebar .nav-btn.active:hover{background:#ffcb47;color:#35230d}
+.topbar{background:#fffdf7eF;backdrop-filter:blur(10px);border-bottom:1px solid #eddfc1}
+.topbar h2{color:#3d2b12}.top-actions{gap:10px}.top-avatar{background:#ffe6a0;color:#684208}
+.logout-top{background:#fff5df;color:#784508;border:1px solid #eacb8d;display:inline-flex;align-items:center;justify-content:center;gap:7px;box-shadow:none;padding:10px 13px;transition:background .18s ease}
+.logout-top:hover{background:#ffe5a6;border-color:#dba42d}.logout-top:focus-visible{outline:3px solid #b87813;outline-offset:2px}
+.welcome{background:radial-gradient(circle at 85% 25%,#ffdb6d 0%,transparent 35%),linear-gradient(115deg,#bc7410,#f4ae1d 65%,#f8c94d);box-shadow:0 13px 30px #b5761724;border:1px solid #f1bc4c;border-radius:22px}
+.welcome h2{color:#34210b}.welcome p{color:#fff9e8}.welcome .btn{border:1px solid #ffecbd}
+.stat,.panel{background:#fffefa;border:1px solid #efdfbf;border-radius:19px;box-shadow:0 9px 28px #885b150c}
+.stat strong,.panel h3{color:#402d11}.stat-icon{border-radius:13px}
+.primary{background:linear-gradient(105deg,#f5ae16,#ffd05c);color:#37240b;border:1px solid #e9ac2c;box-shadow:0 6px 16px #b87a1c24}
+.primary:hover{background:linear-gradient(105deg,#ffc13e,#ffda7a)}
+input,select{background:#fffefb;border-color:#e9d7b2}input:focus,select:focus{border-color:#d38a0b;box-shadow:0 0 0 3px #ffc6484a}
+th{background:#fff1d1;color:#744c12}tr:hover td{background:#fffbf0}
+.metric,.pro-panel,.compare-summary,.admin-help{background:#fff6df;border-color:#f0d8a5}.export-links a:hover{background:#ffe6ab}
+@media(max-width:700px){.topbar{gap:8px}.top-actions{gap:7px}.topbar h2{font-size:20px}.logout-top{padding:9px 10px;font-size:12px}.logout-top span{display:inline}.auth-card{padding:24px 18px}.sidebar{background:linear-gradient(120deg,#573914,#39250f)}.content{padding:14px}.welcome{border-radius:17px}}
+@media(max-width:380px){.top-avatar{display:none}.logout-top{padding:8px}.topbar h2{font-size:18px}}

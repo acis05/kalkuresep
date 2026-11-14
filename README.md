@@ -142,3 +142,10 @@ Semua angka desimal di UI kalkulasi, analisis, dan laporan ditampilkan maksimal 
 - Middleware menerima `multipart/form-data` untuk POST `/api/recipes/{id}/photo` (sebelumnya HTTP 415).
 - URL blob pratinjau dibersihkan saat mengganti, membatalkan, atau menyimpan resep.
 - Setelah deploy, lakukan refresh penuh dan uji unggah foto lalu muat ulang halaman.
+
+
+## v2.13 — Tema Golden Kitchen & Logout
+- Tampilan diperbarui ke palet saffron/madu/karamel/krem dengan kontras yang lebih nyaman.
+- Tombol **Logout** selalu terlihat di kanan atas, termasuk pada layar HP.
+- Tombol logout sidebar tetap tersedia di desktop. Keduanya memanggil endpoint logout yang sama.
+- Tidak ada perubahan database atau environment variable.
