@@ -174,14 +174,14 @@ async def security(request:Request,call_next):
                 return JSONResponse({'detail':'Invalid origin'},status_code=403)
         elif request.cookies.get('kr_session'):
             return JSONResponse({'detail':'Origin required'},status_code=403)
-        if request.headers.get('content-type','').split(';')[0] != ('multipart/form-data' if request.url.path=='/api/pro/import/preview' else 'application/json'):
+        if request.headers.get('content-type','').split(';')[0] != ('multipart/form-data' if (request.url.path=='/api/pro/import/preview' or (request.url.path.startswith('/api/recipes/') and request.url.path.endswith('/photo') and request.method=='POST')) else 'application/json'):
             return JSONResponse({'detail':'JSON required'},status_code=415)
     response=await call_next(request)
     response.headers['Cache-Control']='no-store' if request.url.path in ('/','/static/app.js','/static/style.css') or request.url.path.startswith('/api/') else 'public, max-age=3600'
     response.headers['X-Content-Type-Options']='nosniff'
     response.headers['X-Frame-Options']='DENY'
     response.headers['Referrer-Policy']='same-origin'
-    response.headers['Content-Security-Policy']="default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'"
+    response.headers['Content-Security-Policy']="default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' blob: data:; base-uri 'none'; frame-ancestors 'none'"
     return response
 
 class Credentials(BaseModel):

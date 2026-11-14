@@ -135,3 +135,10 @@ Semua angka desimal di UI kalkulasi, analisis, dan laporan ditampilkan maksimal 
 - Endpoint foto hanya dapat diakses pemilik resep yang sedang login.
 - `Base.metadata.create_all` membuat tabel baru saat startup; backup PostgreSQL sebelum deployment.
 - Foto lama tidak otomatis muncul; pengguna dapat menambahkannya melalui Edit Resep.
+
+
+## v2.12 - Perbaikan foto resep
+- CSP mengizinkan pratinjau `blob:` dan gambar aplikasi sendiri, tanpa membuka script inline.
+- Middleware menerima `multipart/form-data` untuk POST `/api/recipes/{id}/photo` (sebelumnya HTTP 415).
+- URL blob pratinjau dibersihkan saat mengganti, membatalkan, atau menyimpan resep.
+- Setelah deploy, lakukan refresh penuh dan uji unggah foto lalu muat ulang halaman.
