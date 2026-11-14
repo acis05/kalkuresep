@@ -68,3 +68,14 @@ Buka http://127.0.0.1:8000. Untuk lokal gunakan `COOKIE_SECURE=false` agar sesi 
 - Tabel tambahan dibuat saat startup: `ingredient_price_history` dan `export_usage`. **Backup PostgreSQL sebelum upgrade.**
 - Tidak ada payment gateway; admin tetap mengaktifkan Pro manual selama 365 hari.
 - Catatan: versi ini MVP, bukan siap produksi publik. Belum ada verifikasi email, reset password, Redis rate limiter, Alembic migrations, maupun backup otomatis.
+
+
+## Update v2.3 — Login, UI, Admin
+- Memperbaiki tombol login/registrasi yang sebelumnya menggunakan `onclick` inline dan diblokir Content-Security-Policy. Semua aksi kini memakai event listener JavaScript eksternal.
+- UI modern responsif: halaman autentikasi, sidebar, dashboard, resep, bahan, kalkulator, perbandingan HPP, admin.
+- Admin: isi `ADMIN_EMAIL` dan `ADMIN_PASSWORD` (minimal 16 karakter) di Railway Variables **sebelum deploy pertama**. Startup membuat akun admin jika email belum terdaftar. Login memakai email/password itu, kemudian klik **Admin Panel** pada sidebar. Jika email admin sudah terdaftar sebagai pengguna biasa, startup menolak promosi otomatis demi keamanan; gunakan email admin lain atau migrasi akun dengan verifikasi manual.
+- `COOKIE_SECURE=true` untuk HTTPS Railway; untuk localhost HTTP gunakan `COOKIE_SECURE=false`.
+- Setelah push GitHub, lakukan hard refresh browser (Ctrl+Shift+R) jika masih memuat JS lama.
+- Paket Pro 365 hari masih diaktifkan manual setelah pembayaran diverifikasi.
+- Perubahan UI ini tidak memerlukan migrasi database tambahan. Backup database sebelum deploy tetap disarankan.
+- Catatan keamanan: aplikasi belum dilengkapi verifikasi email, reset password, rate limiting terdistribusi, backup otomatis, dan audit log admin. Jangan menerima pembayaran publik sebelum pengujian dan hardening produksi.

@@ -12,6 +12,12 @@ with TestClient(app,headers={'Origin':'http://testserver'}) as client:
   rid=r.json()['id'];r=client.get(f'/api/recipes/{rid}/calculate?target=50&sell_price=5000');assert r.status_code==200,r.text
   assert r.json()['total_cost']=='45000.0',r.json()
   assert r.json()['hpp_per_unit']=='900.0',r.json()
+  # Activate Pro as admin before testing Pro-only Excel export.
+  client.post('/api/logout',json={})
+  assert client.post('/api/login',json={'email':'admin@example.com','password':'supersecretpassword1234'}).status_code==200
+  r=client.put('/api/admin/users/2/plan',json={'plan':'pro','duration_days':365});assert r.status_code==200,r.text
+  client.post('/api/logout',json={})
+  assert client.post('/api/login',json={'email':'user@example.com','password':'password123456'}).status_code==200
   for ext in ['pdf','xlsx']:
     r=client.get(f'/api/recipes/{rid}/export.{ext}?target=50');assert r.status_code==200,(ext,r.text[:300]);print(ext,len(r.content))
   client.post('/api/logout',json={})

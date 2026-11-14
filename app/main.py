@@ -63,7 +63,7 @@ class ExportUsage(Base):
     kind:Mapped[str]=mapped_column(String(10))
     created_at:Mapped[int]=mapped_column(Integer)
 
-app=FastAPI(title='KalkuResep Cloud',version='2.2.0')
+app=FastAPI(title='KalkuResep Cloud',version='2.3.0')
 _attempts={}
 def throttle(request:Request, action:str):
     # In-memory guard for single-instance MVP. Use Redis for multiple replicas.
@@ -89,8 +89,12 @@ def startup():
     email=os.getenv('ADMIN_EMAIL','').strip().lower(); password=os.getenv('ADMIN_PASSWORD','')
     if email and password and len(password)>=16:
         with SessionLocal.begin() as db:
-            if not db.scalar(select(User).where(User.email==email)):
+            existing=db.scalar(select(User).where(User.email==email))
+            if not existing:
                 db.add(User(email=email,password_hash=hash_password(password),plan='pro',is_admin=True))
+            elif not existing.is_admin:
+                # Admin bootstrap must not silently promote an account registered by someone else.
+                raise RuntimeError('ADMIN_EMAIL sudah terdaftar sebagai akun biasa. Gunakan email admin lain atau migrasi akun secara terverifikasi.')
 
 def hash_password(password):
     salt=secrets.token_bytes(16)
@@ -132,6 +136,7 @@ async def security(request:Request,call_next):
         if request.headers.get('content-type','').split(';')[0]!='application/json':
             return JSONResponse({'detail':'JSON required'},status_code=415)
     response=await call_next(request)
+    response.headers['Cache-Control']='no-store' if request.url.path in ('/','/static/app.js','/static/style.css') or request.url.path.startswith('/api/') else 'public, max-age=3600'
     response.headers['X-Content-Type-Options']='nosniff'
     response.headers['X-Frame-Options']='DENY'
     response.headers['Referrer-Policy']='same-origin'
@@ -161,7 +166,7 @@ def dec(value,positive=False):
     return d
 
 def effective_plan(u):
-    return 'pro' if u.is_admin or (u.plan=='pro' and (u.pro_expires_at is None or u.pro_expires_at>int(time.time()))) else 'free'
+    return 'pro' if u.is_admin or (u.plan=='pro' and u.pro_expires_at is not None and u.pro_expires_at>int(time.time())) else 'free'
 def require_pro(u):
     if effective_plan(u)!='pro': raise HTTPException(403,'Fitur khusus Pro. Silakan upgrade.')
 def export_permission(u,db,kind):
