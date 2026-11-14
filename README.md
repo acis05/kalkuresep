@@ -118,3 +118,7 @@ Enam fitur Pro: **sub-resep**, **simulasi harga bahan**, **Smart Selling Price**
 - Edit master bahan: nama, kuantitas beli, satuan beli/pakai, harga, riwayat perubahan harga.
 - Resep dengan bahan terhapus tetap dapat dihitung dari bahan yang masih ada. Respons kalkulasi memuat `missing_ingredients` dan UI memberi peringatan. Nilai HPP setelah penghapusan tidak mencakup bahan hilang dan bukan HPP produksi lengkap.
 - Saat edit resep, referensi bahan terhapus dilewati; simpan untuk membersihkannya.
+
+
+## v2.8 — Simulasi penjualan (Pro)
+Di Analisis Bisnis, pilih resep yang sudah memiliki harga jual, isi qty terjual, lalu hitung estimasi omzet, total HPP, laba kotor, margin. Tombol export Excel dan PDF tersedia setelah simulasi berhasil. Angka adalah proyeksi, bukan transaksi aktual. Akses seluruh endpoint dibatasi Pro dan data milik pengguna yang login.

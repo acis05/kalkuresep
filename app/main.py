@@ -536,6 +536,75 @@ def profitability(u:User=Depends(current_user),db:Session=Depends(db_session)):
         rows.append({'recipe_id':r.id,'name':r.name,'yield_qty':r.yield_qty,'yield_unit':r.yield_unit,'hpp':str(hpp),'price':str(price) if price is not None else None,'gross_profit':str(price-hpp) if price is not None else None,'margin_pct':str((price-hpp)/price*100) if price else None,'food_cost_pct':str(hpp/price*100) if price else None})
     return sorted(rows,key=lambda x:Decimal(x['gross_profit']) if x['gross_profit'] is not None else Decimal('-999999999999'),reverse=True)
 
+
+# Sales-volume projection: intentionally does not persist hypothetical sales.
+def sales_projection_data(recipe_id:int, quantity:int, u:User, db:Session):
+    require_pro(u)
+    if quantity < 0 or quantity > 100000000:
+        raise HTTPException(422,'Qty terjual harus antara 0 dan 100.000.000')
+    recipe=recipe_owned(db,u,recipe_id)
+    saved=db.scalar(select(RecipeSellingPrice).where(RecipeSellingPrice.owner_id==u.id,RecipeSellingPrice.recipe_id==recipe_id))
+    if not saved:
+        raise HTTPException(422,'Atur harga jual resep melalui Smart Selling Price terlebih dahulu')
+    price=dec(saved.price)
+    if price<=0: raise HTTPException(422,'Harga jual harus lebih besar dari nol')
+    calc=calculate(recipe_id,recipe.yield_qty,'0',u,db)
+    hpp=dec(calc['hpp_per_unit'])
+    qty=Decimal(quantity)
+    revenue=price*qty; cost=hpp*qty;profit=revenue-cost
+    return {'recipe_id':recipe.id,'recipe_name':recipe.name,'yield_unit':recipe.yield_unit,
+            'qty_sold':quantity,'selling_price':str(price),'hpp_per_unit':str(hpp),
+            'revenue':str(revenue),'estimated_hpp':str(cost),'gross_profit':str(profit),
+            'margin_pct':str(profit/revenue*100) if revenue else None,
+            'food_cost_pct':str(cost/revenue*100) if revenue else None,
+            'missing_ingredients':calc.get('missing_ingredients',[]),
+            'disclaimer':'Simulasi, bukan transaksi aktual. Laba kotor berdasarkan HPP tersimpan saat ini; belum memperhitungkan diskon, pajak, retur, dan biaya lain di luar HPP.'}
+
+@app.get('/api/pro/sales-simulation')
+def sales_simulation(recipe_id:int,qty_sold:int,u:User=Depends(current_user),db:Session=Depends(db_session)):
+    return sales_projection_data(recipe_id,qty_sold,u,db)
+
+@app.get('/api/pro/sales-simulation/export.xlsx')
+def sales_simulation_excel(recipe_id:int,qty_sold:int,u:User=Depends(current_user),db:Session=Depends(db_session)):
+    from io import BytesIO
+    from openpyxl import Workbook
+    from openpyxl.styles import Font,PatternFill,Alignment
+    from fastapi.responses import StreamingResponse
+    data=sales_projection_data(recipe_id,qty_sold,u,db)
+    wb=Workbook();ws=wb.active;ws.title='Simulasi Penjualan'
+    ws.append(['KALKURESEP - SIMULASI PENJUALAN']);ws.merge_cells('A1:B1')
+    ws['A1'].font=Font(bold=True,size=15,color='FFFFFF');ws['A1'].fill=PatternFill('solid',fgColor='087D68')
+    rows=[('Resep',data['recipe_name']),('Qty terjual (simulasi)',data['qty_sold']),('Satuan hasil',data['yield_unit']),('Harga jual per unit',float(data['selling_price'])),('HPP per unit',float(data['hpp_per_unit'])),('Estimasi omzet',float(data['revenue'])),('Estimasi total HPP',float(data['estimated_hpp'])),('Estimasi laba kotor',float(data['gross_profit'])),('Margin (%)',float(data['margin_pct']) if data['margin_pct'] is not None else None),('Food cost (%)',float(data['food_cost_pct']) if data['food_cost_pct'] is not None else None),('Catatan',data['disclaimer'])]
+    for row in rows:ws.append(row)
+    for i in (5,6,7,8,9):ws.cell(i,2).number_format='"Rp" #,##0.00'
+    ws.column_dimensions['A'].width=28;ws.column_dimensions['B'].width=88
+    ws['A12'].alignment=Alignment(wrap_text=True)
+    if data['missing_ingredients']:
+        ws.append(['PERINGATAN','Ada bahan yang sudah dihapus; estimasi HPP hanya memakai bahan tersisa.'])
+    output=BytesIO();wb.save(output);output.seek(0)
+    return StreamingResponse(output,media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',headers={'Content-Disposition':'attachment; filename="kalkuresep-simulasi-penjualan.xlsx"'})
+
+@app.get('/api/pro/sales-simulation/export.pdf')
+def sales_simulation_pdf(recipe_id:int,qty_sold:int,u:User=Depends(current_user),db:Session=Depends(db_session)):
+    from io import BytesIO
+    from xml.sax.saxutils import escape
+    from fastapi.responses import StreamingResponse
+    from reportlab.platypus import SimpleDocTemplate,Paragraph,Spacer,Table,TableStyle
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib import colors
+    data=sales_projection_data(recipe_id,qty_sold,u,db)
+    styles=getSampleStyleSheet();stream=BytesIO();doc=SimpleDocTemplate(stream,pagesize=(595,842))
+    story=[Paragraph('KalkuResep - Simulasi Penjualan',styles['Title']),Spacer(1,16)]
+    rows=[['Keterangan','Nilai'],['Resep',data['recipe_name']],['Qty terjual (simulasi)',str(data['qty_sold'])+' '+data['yield_unit']]]
+    for key,label in [('selling_price','Harga jual / unit'),('hpp_per_unit','HPP / unit'),('revenue','Estimasi omzet'),('estimated_hpp','Estimasi total HPP'),('gross_profit','Estimasi laba kotor')]:rows.append([label,'Rp '+format(Decimal(data[key]),',.2f')])
+    rows.append(['Margin',format(Decimal(data['margin_pct']),'.2f')+'%' if data['margin_pct'] is not None else '-'])
+    table=Table([[Paragraph(escape(str(v)),styles['Normal']) for v in row] for row in rows],colWidths=[230,275],repeatRows=1)
+    table.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#087D68')),('TEXTCOLOR',(0,0),(-1,0),colors.white),('BOTTOMPADDING',(0,0),(-1,-1),9),('TOPPADDING',(0,0),(-1,-1),9),('GRID',(0,0),(-1,-1),.4,colors.lightgrey)]))
+    story.append(table);story.append(Spacer(1,14));story.append(Paragraph(escape(data['disclaimer']),styles['Normal']))
+    if data['missing_ingredients']:story.append(Paragraph('PERINGATAN: Bahan yang dihapus tidak dihitung dalam estimasi HPP.',styles['Normal']))
+    doc.build(story);stream.seek(0)
+    return StreamingResponse(stream,media_type='application/pdf',headers={'Content-Disposition':'attachment; filename="kalkuresep-simulasi-penjualan.pdf"'})
+
 @app.get('/api/pro/import/template')
 def import_template(u:User=Depends(current_user)):
     require_pro(u)
