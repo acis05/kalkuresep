@@ -3,9 +3,9 @@ from datetime import datetime, timezone, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from fastapi import FastAPI, Request, HTTPException, Depends, UploadFile, File
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import create_engine, String, Integer, ForeignKey, Text, select, func, text
+from sqlalchemy import create_engine, String, Integer, ForeignKey, Text, LargeBinary, select, func, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Session, sessionmaker
 
 DATABASE_URL=os.getenv('DATABASE_URL','sqlite:///./kalkuresep_dev.db')
@@ -58,6 +58,13 @@ class Recipe(Base):
     packaging_cost:Mapped[str]=mapped_column(String(40),default='0')
     labor_cost:Mapped[str]=mapped_column(String(40),default='0')
     overhead_cost:Mapped[str]=mapped_column(String(40),default='0')
+
+class RecipePhoto(Base):
+    __tablename__='recipe_photos'
+    recipe_id:Mapped[int]=mapped_column(ForeignKey('recipes.id'),primary_key=True)
+    owner_id:Mapped[int]=mapped_column(ForeignKey('users.id'),index=True)
+    mime:Mapped[str]=mapped_column(String(32))
+    content:Mapped[bytes]=mapped_column(LargeBinary)
 
 class RecipeComponent(Base):
     __tablename__='recipe_components'
@@ -223,6 +230,7 @@ def remove_unit(code:str,u:User=Depends(current_user),db:Session=Depends(db_sess
     for r in db.scalars(select(Recipe).where(Recipe.owner_id==u.id)):
         if any(item.get('unit')==code for item in json.loads(r.items_json)):
             raise HTTPException(409,'Satuan masih digunakan dalam resep')
+    db.query(RecipePhoto).filter(RecipePhoto.recipe_id==recipe_id,RecipePhoto.owner_id==u.id).delete()
     db.delete(x);db.commit();return {'ok':True}
 class RecipeIn(BaseModel):
     name:str=Field(min_length=1,max_length=120)
@@ -253,7 +261,7 @@ def export_permission(u,db,kind):
 def record_export(u,db,kind):
     db.add(ExportUsage(owner_id=u.id,month=datetime.now(timezone.utc).strftime('%Y-%m'),kind=kind,created_at=int(time.time())))
     db.commit()
-def user_view(u): return {'id':u.id,'email':u.email,'plan':effective_plan(u),'is_admin':u.is_admin,'active':u.active,'pro_expires_at':u.pro_expires_at,'limits':{'recipes':None if effective_plan(u)=='pro' else 5,'ingredients':None if effective_plan(u)=='pro' else 30,'pdf_per_month':None if effective_plan(u)=='pro' else 3,'excel':effective_plan(u)=='pro'}}
+def user_view(u): return {'id':u.id,'email':u.email,'plan':effective_plan(u),'is_admin':u.is_admin,'active':u.active,'pro_expires_at':u.pro_expires_at,'limits':{'recipes':None if effective_plan(u)=='pro' else 5,'ingredients':None if effective_plan(u)=='pro' else 20,'pdf_per_month':None if effective_plan(u)=='pro' else 3,'excel':effective_plan(u)=='pro'}}
 
 def issue_cookie(resp,db,user):
     token=secrets.token_urlsafe(32)
@@ -292,7 +300,7 @@ def ingredients(u:User=Depends(current_user),db:Session=Depends(db_session)):
 @app.post('/api/ingredients')
 def add_ingredient(data:IngredientIn,u:User=Depends(current_user),db:Session=Depends(db_session)):
     count=db.scalar(select(func.count()).select_from(Ingredient).where(Ingredient.owner_id==u.id))
-    if effective_plan(u)=='free' and count>=30:raise HTTPException(403,'Batas 30 bahan paket Free tercapai')
+    if effective_plan(u)=='free' and count>=20:raise HTTPException(403,'Batas 20 bahan paket Free tercapai')
     conversion(db,u,data.purchase_unit,data.usage_unit)
     qty=dec(data.purchase_qty,True);price=dec(data.price_per_unit)
     x=Ingredient(owner_id=u.id,name=data.name.strip(),unit=data.usage_unit,price_per_unit=str(price),purchase_qty=str(qty),purchase_unit=data.purchase_unit,usage_unit=data.usage_unit)
@@ -315,7 +323,7 @@ def delete_ingredient(item_id:int,u:User=Depends(current_user),db:Session=Depend
     if not x: raise HTTPException(404,'Bahan tidak ditemukan')
     db.delete(x);db.commit();return {'ok':True}
 
-def recipe_view(x): return {'id':x.id,'name':x.name,'yield_qty':x.yield_qty,'yield_unit':x.yield_unit,'items':json.loads(x.items_json),'packaging_cost':x.packaging_cost,'labor_cost':x.labor_cost,'overhead_cost':x.overhead_cost}
+def recipe_view(x): return {'id':x.id,'name':x.name,'yield_qty':x.yield_qty,'yield_unit':x.yield_unit,'items':json.loads(x.items_json),'packaging_cost':x.packaging_cost,'labor_cost':x.labor_cost,'overhead_cost':x.overhead_cost,'has_photo':bool(getattr(x,'has_photo',False))}
 def validate_recipe(data,db,u):
     dec(data.yield_qty,True)
     normalized=[]
@@ -344,7 +352,9 @@ def set_components(db,u,recipe_id,components):
         db.add(RecipeComponent(owner_id=u.id,parent_id=recipe_id,child_id=child_id,qty=qty))
 @app.get('/api/recipes')
 def recipes(u:User=Depends(current_user),db:Session=Depends(db_session)):
-    return [recipe_view(x) for x in db.scalars(select(Recipe).where(Recipe.owner_id==u.id).order_by(Recipe.id.desc()))]
+    rows=list(db.scalars(select(Recipe).where(Recipe.owner_id==u.id).order_by(Recipe.id.desc())))
+    photos=set(db.scalars(select(RecipePhoto.recipe_id).where(RecipePhoto.owner_id==u.id)))
+    return [dict(recipe_view(x),has_photo=x.id in photos) for x in rows]
 @app.post('/api/recipes')
 def add_recipe(data:RecipeIn,u:User=Depends(current_user),db:Session=Depends(db_session)):
     items=validate_recipe(data,db,u)
@@ -374,6 +384,37 @@ def duplicate_recipe(recipe_id:int,u:User=Depends(current_user),db:Session=Depen
     if not x: raise HTTPException(404,'Resep tidak ditemukan')
     y=Recipe(owner_id=u.id,name=(x.name[:110]+' (Salinan)'),yield_qty=x.yield_qty,yield_unit=x.yield_unit,items_json=x.items_json,packaging_cost=x.packaging_cost,labor_cost=x.labor_cost,overhead_cost=x.overhead_cost)
     db.add(y);db.flush();set_components(db,u,y.id,[(c.child_id,c.qty) for c in db.scalars(select(RecipeComponent).where(RecipeComponent.owner_id==u.id,RecipeComponent.parent_id==recipe_id))]);db.commit();return {'id':y.id}
+# Photos live in PostgreSQL, not ephemeral Railway container storage.
+# Authentication and owner isolation apply to reads, uploads and deletions.
+@app.get('/api/recipes/{recipe_id}/photo')
+def get_recipe_photo(recipe_id:int,u:User=Depends(current_user),db:Session=Depends(db_session)):
+    photo=db.scalar(select(RecipePhoto).where(RecipePhoto.recipe_id==recipe_id,RecipePhoto.owner_id==u.id))
+    if not photo: raise HTTPException(404,'Foto resep tidak ditemukan')
+    return Response(photo.content,media_type=photo.mime,headers={'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'})
+
+@app.post('/api/recipes/{recipe_id}/photo')
+async def upload_recipe_photo(recipe_id:int,file:UploadFile=File(...),u:User=Depends(current_user),db:Session=Depends(db_session)):
+    recipe=db.scalar(select(Recipe).where(Recipe.id==recipe_id,Recipe.owner_id==u.id))
+    if not recipe: raise HTTPException(404,'Resep tidak ditemukan')
+    # Check actual file signature, not the user-supplied MIME type or filename.
+    content=await file.read(2*1024*1024+1)
+    if len(content)>2*1024*1024: raise HTTPException(413,'Foto maksimal 2 MB')
+    if content.startswith(b'\xff\xd8\xff'): mime='image/jpeg'
+    elif content.startswith(b'\x89PNG\r\n\x1a\n'): mime='image/png'
+    elif content.startswith(b'RIFF') and content[8:12]==b'WEBP': mime='image/webp'
+    else: raise HTTPException(422,'Gunakan foto JPG, PNG, atau WebP')
+    photo=db.get(RecipePhoto,recipe_id)
+    if photo and photo.owner_id!=u.id: raise HTTPException(403,'Akses ditolak')
+    if photo: photo.mime=mime;photo.content=content
+    else: db.add(RecipePhoto(recipe_id=recipe_id,owner_id=u.id,mime=mime,content=content))
+    db.commit()
+    return {'ok':True}
+
+@app.delete('/api/recipes/{recipe_id}/photo')
+def delete_recipe_photo(recipe_id:int,u:User=Depends(current_user),db:Session=Depends(db_session)):
+    db.query(RecipePhoto).filter(RecipePhoto.recipe_id==recipe_id,RecipePhoto.owner_id==u.id).delete()
+    db.commit();return {'ok':True}
+
 class IngredientPriceUpdate(BaseModel):
     price_per_unit:str
 @app.put('/api/ingredients/{item_id}/price')

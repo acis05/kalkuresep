@@ -11,3 +11,25 @@
 #importPreview .panel{background:#f4faf7;margin-top:18px}
 #importContent input[type=file]{padding:12px;background:#fff;border:1px dashed #9acabd;border-radius:12px}
 #proGate,#importGate{padding:22px;background:#f7faf8;border-radius:16px}
+
+/* v2.11 — warm culinary saffron and charcoal theme */
+:root{color:#332917;background:#fffbf2}
+body,.main-area{background:#fffbf2}
+.auth-brand{background:radial-gradient(circle at 65% 30%,#edb62b 0%,#bd7b0d 55%,#75400c 100%)}
+.auth-side{background:#fffdf8}.brand small,.hero em{color:#ffe8a4}.hero p,.hero-footer{color:#fff1ce}
+.sidebar{background:linear-gradient(165deg,#423015,#241c13)}.sidebar-label{color:#c6a46c}.sidebar .nav-btn{color:#f3e5c8}
+.nav-btn.active,.nav-btn:hover{background:#e8ad24;color:#2c210c}
+.topbar{border-bottom-color:#f0e4cd;background:#fffefb}
+.eyebrow{color:#b47b13}.welcome{background:linear-gradient(110deg,#b9770c,#f0b72b);color:#281d0b}
+.welcome .eyebrow,.welcome p{color:#fff5d8}.welcome .primary{background:#fffaf0;color:#6d4505}
+.primary{background:#e7a91e;color:#30220a;box-shadow:0 6px 16px #ad75151c}.primary:hover{background:#f5c449}
+.light,.export-links a{background:#fff1cb;color:#855708}.link-btn{color:#9b6506}
+.ghost{background:#ffffff16;color:#fff5df;border-color:#ffffff32}
+.stat,.panel{border-color:#f0e4cf;box-shadow:0 6px 24px #79501b0a}
+input,select{border-color:#e7d8bc;color:#3b2c14}input:focus,select:focus{border-color:#d59b18;box-shadow:0 0 0 3px #f4c65338}
+label,td{color:#51412a}th{background:#fff4d9;color:#80602c}td,th{border-bottom-color:#f1e8d8}
+.pill,.pro-mini{background:#ffedba;color:#815300}.pill.soft,.plan-note{background:#fff6df;color:#906314;border-color:#f0dba5}
+.metric,.compare-summary,.admin-help,.pro-panel{background:#fff7e6;border-color:#f1dfb8}
+.mint,.gold{background:#ffedb9;color:#a46d0b}.blue{background:#fbead0;color:#9d6b20}
+.recipe-name-cell{display:flex;align-items:center;gap:12px;min-width:160px}.recipe-thumb{width:58px;height:58px;object-fit:cover;border-radius:12px;flex:none;border:1px solid #f0dfbc}.recipe-placeholder{display:grid;place-items:center;background:#fff1cf;font-size:25px}
+.photo-editor{background:#fffaed;border:1px dashed #dfbd71;border-radius:14px;padding:16px;margin:12px 0 22px}.photo-editor input{margin-top:8px}.photo-preview-wrap{display:flex;align-items:center;gap:12px;margin-top:10px}.photo-preview-wrap img{width:150px;height:110px;object-fit:cover;border-radius:12px}

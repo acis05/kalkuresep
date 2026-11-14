@@ -62,7 +62,7 @@ Buka http://127.0.0.1:8000. Untuk lokal gunakan `COOKIE_SECURE=false` agar sesi 
 
 
 ## Perubahan v2.2 — Free dan Pro
-- Free: maksimal **5 resep**, **30 bahan**, **3 unduhan PDF per bulan kalender UTC**; tidak bisa ekspor Excel, duplikasi resep, riwayat harga, atau membandingkan HPP.
+- Free: maksimal **5 resep**, **20 bahan**, **3 unduhan PDF per bulan kalender UTC**; tidak bisa ekspor Excel, duplikasi resep, riwayat harga, atau membandingkan HPP.
 - Pro: resep/bahan tanpa batas kuota produk, ekspor PDF/Excel, duplikasi resep, riwayat harga bahan, dan perbandingan HPP (maksimal 100 resep per permintaan). Fair-use tetap diperlukan pada deployment publik.
 - Pembatasan diverifikasi di API. Perubahan harga bahan lewat endpoint PUT akan tercatat pada histori.
 - Tabel tambahan dibuat saat startup: `ingredient_price_history` dan `export_usage`. **Backup PostgreSQL sebelum upgrade.**
@@ -126,3 +126,12 @@ Di Analisis Bisnis, pilih resep yang sudah memiliki harga jual, isi qty terjual,
 
 ## v2.9 - Tampilan angka
 Semua angka desimal di UI kalkulasi, analisis, dan laporan ditampilkan maksimal dua digit setelah koma dengan locale Indonesia. Perhitungan internal tetap menggunakan presisi aslinya. PDF resep dan format angka Excel resep juga dibatasi dua desimal.
+
+
+## v2.11 — Tema kuliner dan foto resep
+- Palet saffron/kuning hangat, cokelat gelap, dan krem.
+- Tambah/ubah/hapus foto pada editor resep; thumbnail di daftar resep dan dashboard.
+- Foto JPG/PNG/WebP maksimal 2 MB per resep; disimpan di tabel `recipe_photos` PostgreSQL (bukan disk Railway sementara).
+- Endpoint foto hanya dapat diakses pemilik resep yang sedang login.
+- `Base.metadata.create_all` membuat tabel baru saat startup; backup PostgreSQL sebelum deployment.
+- Foto lama tidak otomatis muncul; pengguna dapat menambahkannya melalui Edit Resep.
