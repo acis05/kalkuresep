@@ -710,6 +710,11 @@ from fastapi.staticfiles import StaticFiles
 app.mount('/static',StaticFiles(directory=Path(__file__).resolve().parent.parent/'static'),name='static')
 
 
+def display_num2(value):
+    from decimal import Decimal, ROUND_HALF_UP
+    n=Decimal(str(value or 0)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+    return f'{n:,.2f}'.rstrip('0').rstrip('.')
+
 @app.get('/api/recipes/{recipe_id}/export.xlsx')
 def export_xlsx(recipe_id:int,target:str='1',sell_price:str='0',u:User=Depends(current_user),db:Session=Depends(db_session)):
     require_pro(u)
@@ -725,6 +730,10 @@ def export_xlsx(recipe_id:int,target:str='1',sell_price:str='0',u:User=Depends(c
         ws.append([row['name'],float(row['qty']),row['unit'],float(row['cost']),float(row['bakers_pct']) if row['bakers_pct'] is not None else None])
     for key,label in [('ingredient_cost','Biaya bahan'),('total_cost','Total HPP'),('hpp_per_unit','HPP per unit'),('selling_price','Harga jual'),('profit_per_unit','Laba per unit')]:
         ws.append([label,float(result[key])])
+    for cells in ws.iter_rows(min_row=4):
+        for cell in cells:
+            if isinstance(cell.value,(int,float)):
+                cell.number_format='#,##0.##'
     for col,width in {'A':32,'B':19,'C':15,'D':22,'E':17}.items():ws.column_dimensions[col].width=width
     stream=BytesIO();wb.save(stream);stream.seek(0);record_export(u,db,'excel')
     return StreamingResponse(stream,media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',headers={'Content-Disposition':f'attachment; filename="kalkuresep-{recipe_id}.xlsx"'})
@@ -744,8 +753,8 @@ def export_pdf(recipe_id:int,target:str='1',sell_price:str='0',u:User=Depends(cu
     out=BytesIO();doc=SimpleDocTemplate(out);styles=getSampleStyleSheet()
     story=[Paragraph('KalkuResep - '+escape(x.name),styles['Title']),Paragraph('Target: '+escape(target)+' '+escape(x.yield_unit),styles['Normal']),Spacer(1,14)]
     data=[['Bahan','Jumlah','Satuan','Biaya Rp',"Baker's %"]]
-    for item in r['items']:data.append([item['name'],item['qty'],item['unit'],item['cost'],item['bakers_pct'] or '-'])
+    for item in r['items']:data.append([item['name'],display_num2(item['qty']),item['unit'],display_num2(item['cost']),display_num2(item['bakers_pct']) if item['bakers_pct'] is not None else '-'])
     t=Table(data,repeatRows=1,hAlign='LEFT');t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#087D68')),('TEXTCOLOR',(0,0),(-1,0),colors.white),('GRID',(0,0),(-1,-1),0.4,colors.lightgrey),('BOTTOMPADDING',(0,0),(-1,-1),7)]));story.append(t)
-    for key,label in [('ingredient_cost','Biaya bahan'),('total_cost','Total HPP'),('hpp_per_unit','HPP per unit'),('selling_price','Harga jual'),('profit_per_unit','Laba per unit')]:story.append(Paragraph(label+': Rp '+escape(r[key]),styles['Normal']))
+    for key,label in [('ingredient_cost','Biaya bahan'),('total_cost','Total HPP'),('hpp_per_unit','HPP per unit'),('selling_price','Harga jual'),('profit_per_unit','Laba per unit')]:story.append(Paragraph(label+': Rp '+escape(display_num2(r[key])),styles['Normal']))
     doc.build(story);out.seek(0);record_export(u,db,'pdf')
     return StreamingResponse(out,media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="kalkuresep-{recipe_id}.pdf"'})

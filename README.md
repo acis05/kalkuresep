@@ -122,3 +122,7 @@ Enam fitur Pro: **sub-resep**, **simulasi harga bahan**, **Smart Selling Price**
 
 ## v2.8 — Simulasi penjualan (Pro)
 Di Analisis Bisnis, pilih resep yang sudah memiliki harga jual, isi qty terjual, lalu hitung estimasi omzet, total HPP, laba kotor, margin. Tombol export Excel dan PDF tersedia setelah simulasi berhasil. Angka adalah proyeksi, bukan transaksi aktual. Akses seluruh endpoint dibatasi Pro dan data milik pengguna yang login.
+
+
+## v2.9 - Tampilan angka
+Semua angka desimal di UI kalkulasi, analisis, dan laporan ditampilkan maksimal dua digit setelah koma dengan locale Indonesia. Perhitungan internal tetap menggunakan presisi aslinya. PDF resep dan format angka Excel resep juga dibatasi dua desimal.
