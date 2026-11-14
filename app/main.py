@@ -2,7 +2,7 @@ import os, json, secrets, hashlib, hmac, time
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi import FastAPI, Request, HTTPException, Depends, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import create_engine, String, Integer, ForeignKey, Text, select, func, text
@@ -59,6 +59,21 @@ class Recipe(Base):
     labor_cost:Mapped[str]=mapped_column(String(40),default='0')
     overhead_cost:Mapped[str]=mapped_column(String(40),default='0')
 
+class RecipeComponent(Base):
+    __tablename__='recipe_components'
+    id:Mapped[int]=mapped_column(primary_key=True)
+    owner_id:Mapped[int]=mapped_column(ForeignKey('users.id'),index=True)
+    parent_id:Mapped[int]=mapped_column(ForeignKey('recipes.id'),index=True)
+    child_id:Mapped[int]=mapped_column(ForeignKey('recipes.id'),index=True)
+    qty:Mapped[str]=mapped_column(String(40))
+
+class RecipeSellingPrice(Base):
+    __tablename__='recipe_selling_prices'
+    id:Mapped[int]=mapped_column(primary_key=True)
+    owner_id:Mapped[int]=mapped_column(ForeignKey('users.id'),index=True)
+    recipe_id:Mapped[int]=mapped_column(ForeignKey('recipes.id'),index=True)
+    price:Mapped[str]=mapped_column(String(40))
+
 class IngredientPriceHistory(Base):
     __tablename__='ingredient_price_history'
     id:Mapped[int]=mapped_column(primary_key=True)
@@ -74,7 +89,7 @@ class ExportUsage(Base):
     kind:Mapped[str]=mapped_column(String(10))
     created_at:Mapped[int]=mapped_column(Integer)
 
-app=FastAPI(title='KalkuResep Cloud',version='2.4.0')
+app=FastAPI(title='KalkuResep Cloud',version='2.6.0')
 _attempts={}
 def throttle(request:Request, action:str):
     # In-memory guard for single-instance MVP. Use Redis for multiple replicas.
@@ -152,7 +167,7 @@ async def security(request:Request,call_next):
                 return JSONResponse({'detail':'Invalid origin'},status_code=403)
         elif request.cookies.get('kr_session'):
             return JSONResponse({'detail':'Origin required'},status_code=403)
-        if request.headers.get('content-type','').split(';')[0]!='application/json':
+        if request.headers.get('content-type','').split(';')[0] != ('multipart/form-data' if request.url.path=='/api/pro/import/preview' else 'application/json'):
             return JSONResponse({'detail':'JSON required'},status_code=415)
     response=await call_next(request)
     response.headers['Cache-Control']='no-store' if request.url.path in ('/','/static/app.js','/static/style.css') or request.url.path.startswith('/api/') else 'public, max-age=3600'
@@ -214,6 +229,7 @@ class RecipeIn(BaseModel):
     yield_qty:str
     yield_unit:str=Field(default='pcs',max_length=24)
     items:list[dict]=Field(default_factory=list,max_length=100)
+    components:list[dict]=Field(default_factory=list,max_length=30)
     packaging_cost:str='0'
     labor_cost:str='0'
     overhead_cost:str='0'
@@ -300,25 +316,44 @@ def validate_recipe(data,db,u):
         conversion(db,u,unit,ing.purchase_unit)
         normalized.append({'ingredient_id':ingredient_id,'qty':str(qty),'unit':unit})
     return normalized
+def validate_components(data,db,u,parent_id=None):
+    if data.components: require_pro(u)
+    normalized=[]
+    for row in data.components:
+        try: child_id=int(row['recipe_id']); qty=dec(row['qty'],True)
+        except (ValueError,TypeError,KeyError): raise HTTPException(422,'Sub-resep tidak valid')
+        child=db.scalar(select(Recipe).where(Recipe.id==child_id,Recipe.owner_id==u.id))
+        if not child or child_id==parent_id: raise HTTPException(422,'Sub-resep tidak ditemukan atau mengacu ke diri sendiri')
+        normalized.append((child_id,str(qty)))
+    return normalized
+def set_components(db,u,recipe_id,components):
+    db.query(RecipeComponent).filter(RecipeComponent.owner_id==u.id,RecipeComponent.parent_id==recipe_id).delete()
+    for child_id,qty in components:
+        db.add(RecipeComponent(owner_id=u.id,parent_id=recipe_id,child_id=child_id,qty=qty))
 @app.get('/api/recipes')
 def recipes(u:User=Depends(current_user),db:Session=Depends(db_session)):
     return [recipe_view(x) for x in db.scalars(select(Recipe).where(Recipe.owner_id==u.id).order_by(Recipe.id.desc()))]
 @app.post('/api/recipes')
 def add_recipe(data:RecipeIn,u:User=Depends(current_user),db:Session=Depends(db_session)):
     items=validate_recipe(data,db,u)
+    components=validate_components(data,db,u)
     count=db.scalar(select(func.count()).select_from(Recipe).where(Recipe.owner_id==u.id))
     if effective_plan(u)=='free' and count>=5: raise HTTPException(403,'Batas paket Free tercapai')
-    x=Recipe(owner_id=u.id,name=data.name.strip(),yield_qty=str(dec(data.yield_qty,True)),yield_unit=data.yield_unit,items_json=json.dumps(items),packaging_cost=str(dec(data.packaging_cost)),labor_cost=str(dec(data.labor_cost)),overhead_cost=str(dec(data.overhead_cost)));db.add(x);db.commit();return {'id':x.id}
+    x=Recipe(owner_id=u.id,name=data.name.strip(),yield_qty=str(dec(data.yield_qty,True)),yield_unit=data.yield_unit,items_json=json.dumps(items),packaging_cost=str(dec(data.packaging_cost)),labor_cost=str(dec(data.labor_cost)),overhead_cost=str(dec(data.overhead_cost)));db.add(x);db.flush();set_components(db,u,x.id,components);db.commit();return {'id':x.id}
 @app.put('/api/recipes/{recipe_id}')
 def update_recipe(recipe_id:int,data:RecipeIn,u:User=Depends(current_user),db:Session=Depends(db_session)):
     x=db.scalar(select(Recipe).where(Recipe.id==recipe_id,Recipe.owner_id==u.id))
     if not x: raise HTTPException(404,'Resep tidak ditemukan')
     items=validate_recipe(data,db,u)
-    x.name=data.name.strip();x.yield_qty=str(dec(data.yield_qty,True));x.yield_unit=data.yield_unit;x.items_json=json.dumps(items);x.packaging_cost=str(dec(data.packaging_cost));x.labor_cost=str(dec(data.labor_cost));x.overhead_cost=str(dec(data.overhead_cost));db.commit();return {'ok':True}
+    components=validate_components(data,db,u,recipe_id)
+    x.name=data.name.strip();x.yield_qty=str(dec(data.yield_qty,True));x.yield_unit=data.yield_unit;x.items_json=json.dumps(items);x.packaging_cost=str(dec(data.packaging_cost));x.labor_cost=str(dec(data.labor_cost));x.overhead_cost=str(dec(data.overhead_cost));set_components(db,u,x.id,components);db.commit();return {'ok':True}
 @app.delete('/api/recipes/{recipe_id}')
 def delete_recipe(recipe_id:int,u:User=Depends(current_user),db:Session=Depends(db_session)):
     x=db.scalar(select(Recipe).where(Recipe.id==recipe_id,Recipe.owner_id==u.id))
     if not x: raise HTTPException(404,'Resep tidak ditemukan')
+    if db.scalar(select(RecipeComponent.id).where(RecipeComponent.owner_id==u.id,RecipeComponent.child_id==recipe_id).limit(1)): raise HTTPException(409,'Resep digunakan sebagai sub-resep. Lepaskan dahulu.')
+    db.query(RecipeComponent).filter(RecipeComponent.owner_id==u.id,RecipeComponent.parent_id==recipe_id).delete()
+    db.query(RecipeSellingPrice).filter(RecipeSellingPrice.owner_id==u.id,RecipeSellingPrice.recipe_id==recipe_id).delete()
     db.delete(x);db.commit();return {'ok':True}
 @app.post('/api/recipes/{recipe_id}/duplicate')
 def duplicate_recipe(recipe_id:int,u:User=Depends(current_user),db:Session=Depends(db_session)):
@@ -326,7 +361,7 @@ def duplicate_recipe(recipe_id:int,u:User=Depends(current_user),db:Session=Depen
     x=db.scalar(select(Recipe).where(Recipe.id==recipe_id,Recipe.owner_id==u.id))
     if not x: raise HTTPException(404,'Resep tidak ditemukan')
     y=Recipe(owner_id=u.id,name=(x.name[:110]+' (Salinan)'),yield_qty=x.yield_qty,yield_unit=x.yield_unit,items_json=x.items_json,packaging_cost=x.packaging_cost,labor_cost=x.labor_cost,overhead_cost=x.overhead_cost)
-    db.add(y);db.commit();return {'id':y.id}
+    db.add(y);db.flush();set_components(db,u,y.id,[(c.child_id,c.qty) for c in db.scalars(select(RecipeComponent).where(RecipeComponent.owner_id==u.id,RecipeComponent.parent_id==recipe_id))]);db.commit();return {'id':y.id}
 class IngredientPriceUpdate(BaseModel):
     price_per_unit:str
 @app.put('/api/ingredients/{item_id}/price')
@@ -356,6 +391,7 @@ def compare_hpp(u:User=Depends(current_user),db:Session=Depends(db_session)):
 def calculate(recipe_id:int,target:str='1',sell_price:str='0',u:User=Depends(current_user),db:Session=Depends(db_session)):
     x=db.scalar(select(Recipe).where(Recipe.id==recipe_id,Recipe.owner_id==u.id))
     if not x: raise HTTPException(404,'Resep tidak ditemukan')
+    if recipe_id in getattr(db,'_kr_stack',[]) or len(getattr(db,'_kr_stack',[]))>=12: raise HTTPException(422,'Siklus sub-resep terdeteksi')
     factor=dec(target,True)/dec(x.yield_qty,True);selling=dec(sell_price)
     items=[];total=Decimal(0);flour=Decimal(0)
     for row in json.loads(x.items_json):
@@ -373,6 +409,20 @@ def calculate(recipe_id:int,target:str='1',sell_price:str='0',u:User=Depends(cur
     for item in items:
         grams=item.pop('base_grams')
         item['bakers_pct']=str(grams/flour*100) if flour and grams is not None else None
+    # Sub-recipes are costed per child yield unit; recursion rejects cycles and excessive depth.
+    stack=getattr(db,'_kr_stack',[])
+    if recipe_id in stack or len(stack)>=12: raise HTTPException(422,'Siklus sub-resep terdeteksi atau kedalaman terlalu besar')
+    db._kr_stack=stack+[recipe_id]
+    try:
+        for component in db.scalars(select(RecipeComponent).where(RecipeComponent.owner_id==u.id,RecipeComponent.parent_id==recipe_id)):
+            child=db.scalar(select(Recipe).where(Recipe.id==component.child_id,Recipe.owner_id==u.id))
+            if not child: raise HTTPException(409,'Sub-resep tidak ditemukan')
+            quantity=dec(component.qty,True)*factor
+            sub=calculate(child.id,str(quantity),'0',u,db)
+            cost=dec(sub['total_cost']);total+=cost
+            items.append({'name':'↳ '+child.name,'unit':child.yield_unit,'qty':str(quantity),'cost':str(cost),'bakers_pct':None})
+    finally:
+        db._kr_stack=stack
     extra={k:dec(getattr(x,k))*factor for k in ('packaging_cost','labor_cost','overhead_cost')}
     full=total+sum(extra.values(),Decimal(0))
     hpp=full/dec(target,True)
@@ -392,6 +442,179 @@ def change_plan(user_id:int,data:PlanChange,admin:User=Depends(require_admin),db
     u.plan=data.plan
     u.pro_expires_at=(int(time.time())+data.duration_days*86400) if data.plan=='pro' and not u.is_admin else None
     db.commit();return user_view(u)
+
+class PriceScenario(BaseModel):
+    recipe_id:int
+    changes:dict[str,str]=Field(default_factory=dict,max_length=100)
+class SellingPriceInput(BaseModel):
+    recipe_id:int
+    mode:str=Field(pattern='^(margin|markup|food_cost)$')
+    target_pct:str
+    rounding:int=Field(default=500,ge=1,le=100000)
+    save:bool=False
+class PriceSet(BaseModel):
+    price:str
+
+def recipe_owned(db,u,recipe_id):
+    r=db.scalar(select(Recipe).where(Recipe.id==recipe_id,Recipe.owner_id==u.id))
+    if not r: raise HTTPException(404,'Resep tidak ditemukan')
+    return r
+
+@app.get('/api/pro/recipes/{recipe_id}/components')
+def get_components(recipe_id:int,u:User=Depends(current_user),db:Session=Depends(db_session)):
+    require_pro(u);recipe_owned(db,u,recipe_id)
+    return [{'recipe_id':c.child_id,'qty':c.qty} for c in db.scalars(select(RecipeComponent).where(RecipeComponent.owner_id==u.id,RecipeComponent.parent_id==recipe_id))]
+
+@app.post('/api/pro/scenario')
+def price_scenario(data:PriceScenario,u:User=Depends(current_user),db:Session=Depends(db_session)):
+    require_pro(u);recipe_owned(db,u,data.recipe_id)
+    baseline=calculate(data.recipe_id,recipe_owned(db,u,data.recipe_id).yield_qty,'0',u,db)
+    # No database price updates; transient override is restored even on exception.
+    originals=[]
+    try:
+        for key,value in data.changes.items():
+            try: ingredient_id=int(key)
+            except ValueError: raise HTTPException(422,'ID bahan tidak valid')
+            ing=db.scalar(select(Ingredient).where(Ingredient.id==ingredient_id,Ingredient.owner_id==u.id))
+            if not ing: raise HTTPException(422,'Bahan tidak ditemukan')
+            try: pct=Decimal(str(value))
+            except (InvalidOperation,ValueError): raise HTTPException(422,'Persentase tidak valid')
+            if not pct.is_finite() or pct < -100 or pct > 1000: raise HTTPException(422,'Perubahan harus antara -100% dan 1000%')
+            originals.append((ing,ing.price_per_unit))
+            ing.price_per_unit=str(dec(ing.price_per_unit)*(1+pct/100))
+        updated=calculate(data.recipe_id,recipe_owned(db,u,data.recipe_id).yield_qty,'0',u,db)
+    finally:
+        for ing,price in originals: ing.price_per_unit=price
+        db.rollback()
+    old=dec(baseline['total_cost']);new=dec(updated['total_cost'])
+    return {'before':baseline,'after':updated,'difference':str(new-old),'difference_pct':str((new-old)/old*100) if old else None}
+
+@app.post('/api/pro/selling-price')
+def smart_selling(data:SellingPriceInput,u:User=Depends(current_user),db:Session=Depends(db_session)):
+    require_pro(u);r=recipe_owned(db,u,data.recipe_id)
+    hpp=dec(calculate(r.id,r.yield_qty,'0',u,db)['hpp_per_unit']);pct=dec(data.target_pct)
+    if data.mode=='margin' and pct>=100: raise HTTPException(422,'Margin harus di bawah 100%')
+    if data.mode=='food_cost' and (pct<=0 or pct>100): raise HTTPException(422,'Food cost harus 0-100%')
+    raw=hpp/(1-pct/100) if data.mode=='margin' else hpp*(1+pct/100) if data.mode=='markup' else hpp/(pct/100)
+    from decimal import ROUND_CEILING
+    price=(raw/Decimal(data.rounding)).to_integral_value(rounding=ROUND_CEILING)*data.rounding
+    if data.save:
+        existing=db.scalar(select(RecipeSellingPrice).where(RecipeSellingPrice.owner_id==u.id,RecipeSellingPrice.recipe_id==r.id))
+        if existing: existing.price=str(price)
+        else: db.add(RecipeSellingPrice(owner_id=u.id,recipe_id=r.id,price=str(price)))
+        db.commit()
+    return {'hpp':str(hpp),'suggested_price':str(price),'gross_profit':str(price-hpp),'margin_pct':str((price-hpp)/price*100) if price else None,'food_cost_pct':str(hpp/price*100) if price else None}
+
+@app.put('/api/pro/recipes/{recipe_id}/selling-price')
+def set_selling_price(recipe_id:int,data:PriceSet,u:User=Depends(current_user),db:Session=Depends(db_session)):
+    require_pro(u);recipe_owned(db,u,recipe_id);price=dec(data.price,True)
+    existing=db.scalar(select(RecipeSellingPrice).where(RecipeSellingPrice.owner_id==u.id,RecipeSellingPrice.recipe_id==recipe_id))
+    if existing: existing.price=str(price)
+    else: db.add(RecipeSellingPrice(owner_id=u.id,recipe_id=recipe_id,price=str(price)))
+    db.commit();return {'ok':True}
+
+@app.get('/api/pro/profitability')
+def profitability(u:User=Depends(current_user),db:Session=Depends(db_session)):
+    require_pro(u);rows=[]
+    prices={p.recipe_id:dec(p.price) for p in db.scalars(select(RecipeSellingPrice).where(RecipeSellingPrice.owner_id==u.id))}
+    for r in db.scalars(select(Recipe).where(Recipe.owner_id==u.id).order_by(Recipe.name)):
+        result=calculate(r.id,r.yield_qty,'0',u,db);hpp=dec(result['hpp_per_unit']);price=prices.get(r.id)
+        rows.append({'recipe_id':r.id,'name':r.name,'yield_qty':r.yield_qty,'yield_unit':r.yield_unit,'hpp':str(hpp),'price':str(price) if price is not None else None,'gross_profit':str(price-hpp) if price is not None else None,'margin_pct':str((price-hpp)/price*100) if price else None,'food_cost_pct':str(hpp/price*100) if price else None})
+    return sorted(rows,key=lambda x:Decimal(x['gross_profit']) if x['gross_profit'] is not None else Decimal('-999999999999'),reverse=True)
+
+@app.get('/api/pro/import/template')
+def import_template(u:User=Depends(current_user)):
+    require_pro(u)
+    from openpyxl import Workbook
+    from openpyxl.styles import Font,PatternFill
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+    wb=Workbook();ws=wb.active;ws.title='Bahan';ws.append(['nama','jumlah_beli','satuan_beli','satuan_pakai','harga_beli']);ws.append(['Tepung terigu','1','kg','g',14000])
+    rs=wb.create_sheet('Resep');rs.append(['kode_resep','nama_resep','hasil','satuan_hasil','nama_bahan','jumlah_pakai','satuan_pakai','kemasan','tenaga_kerja','overhead']);rs.append(['R001','Roti Manis',20,'pcs','Tepung terigu',500,'g',2000,3000,1000])
+    info=wb.create_sheet('Petunjuk');info.append(['KalkuResep v2.6 - Template Import']);info.append(['Hapus baris contoh sebelum impor data asli.']);info.append(['Bahan harus sudah ada atau diimpor pada file yang sama.']);info.append(['Resep dengan kode_resep sama digabungkan menjadi satu resep.']);info.append(['Gunakan satuan yang tersedia di Master Satuan.']);info.append(['Import hanya menambahkan data, tidak mengubah data lama.']);info.append(['Jangan unggah file dari sumber tidak tepercaya.'])
+    for sheet in (ws,rs):
+        sheet.freeze_panes='A2';sheet.auto_filter.ref=sheet.dimensions
+        for cell in sheet[1]:cell.font=Font(bold=True,color='FFFFFF');cell.fill=PatternFill('solid',fgColor='087D68')
+        for col in sheet.columns:
+            sheet.column_dimensions[col[0].column_letter].width=max(17,min(28,max(len(str(c.value or '')) for c in col)+3))
+    out=BytesIO();wb.save(out);out.seek(0)
+    return StreamingResponse(out,media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',headers={'Content-Disposition':'attachment; filename="KalkuResep_Template_Import_v2.6.xlsx"'})
+
+# Preview tokens are server-side and tied to owner; data is revalidated on commit.
+_import_previews={}
+def parse_import(content,db,u):
+    from openpyxl import load_workbook
+    from io import BytesIO
+    try: wb=load_workbook(BytesIO(content),read_only=True,data_only=True)
+    except Exception: raise HTTPException(422,'File Excel tidak valid')
+    if not {'Bahan','Resep'}.issubset(set(wb.sheetnames)): raise HTTPException(422,'Sheet Bahan dan Resep wajib tersedia')
+    def rows(sheet,headers):
+        it=wb[sheet].iter_rows(values_only=True);head=next(it,None)
+        if head is None or tuple(str(x or '').strip() for x in head[:len(headers)])!=tuple(headers): raise HTTPException(422,'Kolom sheet '+sheet+' tidak sesuai template')
+        result=[]
+        for n,row in enumerate(it,2):
+            if n>1001: raise HTTPException(422,'Maksimal 1000 baris per sheet')
+            if not any(x is not None and str(x).strip() for x in row):continue
+            result.append({k:str(row[i]).strip() if i<len(row) and row[i] is not None else '' for i,k in enumerate(headers)})
+        return result
+    ingredients=rows('Bahan',['nama','jumlah_beli','satuan_beli','satuan_pakai','harga_beli'])
+    recipe_rows=rows('Resep',['kode_resep','nama_resep','hasil','satuan_hasil','nama_bahan','jumlah_pakai','satuan_pakai','kemasan','tenaga_kerja','overhead'])
+    if not ingredients and not recipe_rows:raise HTTPException(422,'Template tidak berisi data')
+    known={i.name.casefold():i for i in db.scalars(select(Ingredient).where(Ingredient.owner_id==u.id))}
+    staged={}
+    for row in ingredients:
+        name=row['nama'];key=name.casefold()
+        if not name or key in known or key in staged:raise HTTPException(422,'Nama bahan kosong atau duplikat: '+name)
+        conversion(db,u,row['satuan_beli'],row['satuan_pakai']);dec(row['jumlah_beli'],True);dec(row['harga_beli'])
+        staged[key]=row
+    groups={}
+    for row in recipe_rows:
+        code=row['kode_resep'];name=row['nama_resep'];key=row['nama_bahan'].casefold()
+        if not code or not name or key not in known and key not in staged:raise HTTPException(422,'Kode, resep, atau nama bahan tidak valid: '+str(row))
+        dec(row['hasil'],True);dec(row['jumlah_pakai']);[dec(row[k]) for k in ('kemasan','tenaga_kerja','overhead')]
+        source=known[key].purchase_unit if key in known else staged[key]['satuan_beli']
+        conversion(db,u,row['satuan_pakai'],source)
+        if code in groups and any(groups[code][k]!=row[k] for k in ('nama_resep','hasil','satuan_hasil','kemasan','tenaga_kerja','overhead')):raise HTTPException(422,'Data header resep tidak konsisten: '+code)
+        groups.setdefault(code,{**row,'items':[]})['items'].append(row)
+    if len(groups)>200:raise HTTPException(422,'Maksimal 200 resep per impor')
+    return {'ingredients':ingredients,'recipes':list(groups.values())}
+
+@app.post('/api/pro/import/preview')
+async def preview_import(file:UploadFile=File(...),u:User=Depends(current_user),db:Session=Depends(db_session)):
+    require_pro(u)
+    if not file.filename.lower().endswith('.xlsx'):raise HTTPException(422,'Hanya file .xlsx')
+    content=await file.read(2_000_001)
+    if len(content)>2_000_000:raise HTTPException(413,'Ukuran maksimal 2 MB')
+    data=parse_import(content,db,u)
+    token=secrets.token_urlsafe(24);now=time.time()
+    for key,val in list(_import_previews.items()):
+        if val[0]<now:del _import_previews[key]
+    if len(_import_previews)>=30: _import_previews.pop(next(iter(_import_previews)))
+    _import_previews[token]=(now+900,u.id,content)
+    return {'token':token,'ingredients':len(data['ingredients']),'recipes':len(data['recipes']),'ingredient_names':[x['nama'] for x in data['ingredients'][:15]],'recipe_names':[x['nama_resep'] for x in data['recipes'][:15]]}
+
+class ImportCommit(BaseModel):
+    token:str
+@app.post('/api/pro/import/commit')
+def commit_import(data:ImportCommit,u:User=Depends(current_user),db:Session=Depends(db_session)):
+    require_pro(u);saved=_import_previews.get(data.token)
+    if not saved or saved[0]<time.time() or saved[1]!=u.id:raise HTTPException(410,'Pratinjau kedaluwarsa. Unggah ulang.')
+    payload=parse_import(saved[2],db,u)
+    try:
+        known={i.name.casefold():i for i in db.scalars(select(Ingredient).where(Ingredient.owner_id==u.id))}
+        for row in payload['ingredients']:
+            x=Ingredient(owner_id=u.id,name=row['nama'],unit=row['satuan_pakai'],price_per_unit=str(dec(row['harga_beli'])),purchase_qty=str(dec(row['jumlah_beli'],True)),purchase_unit=row['satuan_beli'],usage_unit=row['satuan_pakai'])
+            db.add(x);db.flush();known[x.name.casefold()]=x
+            db.add(IngredientPriceHistory(owner_id=u.id,ingredient_id=x.id,price_per_unit=x.price_per_unit,created_at=int(time.time())))
+        for row in payload['recipes']:
+            items=[{'ingredient_id':known[i['nama_bahan'].casefold()].id,'qty':str(dec(i['jumlah_pakai'])),'unit':i['satuan_pakai']} for i in row['items']]
+            db.add(Recipe(owner_id=u.id,name=row['nama_resep'],yield_qty=str(dec(row['hasil'],True)),yield_unit=row['satuan_hasil'],items_json=json.dumps(items),packaging_cost=str(dec(row['kemasan'])),labor_cost=str(dec(row['tenaga_kerja'])),overhead_cost=str(dec(row['overhead']))))
+        db.commit()
+    except Exception:
+        db.rollback();raise
+    del _import_previews[data.token]
+    return {'ok':True,'ingredients':len(payload['ingredients']),'recipes':len(payload['recipes'])}
+
 @app.get('/health')
 def health():
     from sqlalchemy import text

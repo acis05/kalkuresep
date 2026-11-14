@@ -99,3 +99,16 @@ Buka http://127.0.0.1:8000. Untuk lokal gunakan `COOKIE_SECURE=false` agar sesi 
 - Perbandingan HPP: status loading, pesan untuk Free, keadaan kosong, dan tabel perbandingan HPP Pro yang lebih informatif.
 - Perbandingan HPP harus memakai satuan hasil yang sebanding; tidak mengubah model database.
 - Deploy: backup PostgreSQL, upload isi folder proyek ke root repo GitHub, commit, deploy Railway, lalu hard refresh browser.
+
+## KalkuResep Cloud v2.6 — Fitur Pro baru
+
+Enam fitur Pro: **sub-resep**, **simulasi harga bahan**, **Smart Selling Price**, **analisis food cost**, **laporan profitabilitas**, dan **import Excel via template dengan pratinjau dan konfirmasi**. Fitur lama v2.5 tetap tersedia.
+
+- **Sub-resep**: buka **Resep Saya**, tambah komponen sub-resep (hanya Pro), simpan. Harga dihitung rekursif dari hasil resep anak; siklus ditolak pada kalkulasi. Satuan komponen mengikuti satuan hasil sub-resep.
+- **Analisis Bisnis**: sidebar → **Analisis Bisnis** untuk rekomendasi harga jual (simpan), simulasi perubahan harga bahan tanpa menyimpan perubahan, dan laporan profitabilitas/food cost. Laporan menghitung **laba kotor per unit**, bukan laba bersih atau proyeksi volume penjualan.
+- **Import Excel**: sidebar → **Import Excel** → unduh template → isi sheet `Bahan` dan `Resep` → unggah `.xlsx` maksimal 2 MB → periksa pratinjau → konfirmasi. Import **hanya menambahkan** data; nama bahan baru harus unik (tidak membedakan kapital). Baris dengan `kode_resep` sama menjadi satu resep. Gunakan satuan dari Master Satuan. Hapus baris contoh sebelum impor data asli.
+- Semua endpoint `/api/pro/*` memerlukan sesi Pro aktif, bukan sekadar disembunyikan dari menu Free.
+- Database memakai `create_all` untuk tabel baru. **Backup PostgreSQL sebelum upgrade**. Untuk produksi berskala besar, gunakan migrasi Alembic, object storage untuk pratinjau import, Redis untuk rate limiting, serta pengujian keamanan dan backup terjadwal.
+- Import Excel menggunakan library `openpyxl` yang sudah tercantum dalam `requirements.txt`.
+
+**Catatan**: `ADMIN_SYNC_PASSWORD=true` hanya sementara untuk reset password akun yang sudah berstatus admin; setelah berhasil, ubah ke `false`.

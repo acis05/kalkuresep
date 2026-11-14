@@ -7,7 +7,7 @@ with TestClient(app,headers={'Origin':'http://testserver'}) as client:
   assert client.get('/health').status_code==200
   assert client.post('/api/register',json={'email':'user@example.com','password':'password123456'}).status_code==200
   assert client.post('/api/login',json={'email':'user@example.com','password':'password123456'}).status_code==200
-  assert client.post('/api/ingredients',json={'name':'Tepung','unit':'g','price_per_unit':'12'}).status_code==200
+  assert client.post('/api/ingredients',json={'name':'Tepung','purchase_qty':'1','purchase_unit':'g','usage_unit':'g','price_per_unit':'12'}).status_code==200
   r=client.post('/api/recipes',json={'name':'Roti','yield_qty':'20','items':[{'ingredient_id':1,'qty':'1000'}],'packaging_cost':'2000','labor_cost':'3000','overhead_cost':'1000'});assert r.status_code==200,r.text
   rid=r.json()['id'];r=client.get(f'/api/recipes/{rid}/calculate?target=50&sell_price=5000');assert r.status_code==200,r.text
   assert r.json()['total_cost']=='45000.0',r.json()
