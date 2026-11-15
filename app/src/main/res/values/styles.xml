@@ -1,0 +1,8 @@
+<resources>
+    <style name="Theme.KalkuResep" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">#A9670B</item>
+        <item name="android:navigationBarColor">#3E2A12</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowBackground">#FFF8E9</item>
+    </style>
+</resources>
